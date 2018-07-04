@@ -21,7 +21,7 @@ struct io_client_t {
 };
 
 typedef struct {
-    io_client_t head;
+    io_client_t* head;
     io_client_t* tail;
 } io_client_list_t;
 

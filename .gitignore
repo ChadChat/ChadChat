@@ -1,3 +1,6 @@
 *.d
 *.o
 backend/chad
+dev/
+.vscode
+node_modules

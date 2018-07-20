@@ -1,7 +1,9 @@
 #include "ws.h"
 #include "ws_parser.h"
+#include "io.h"
 #include "server.h"
 #include "utils/strmap.h"
+#include "endpoint.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -11,41 +13,10 @@
 #include <openssl/sha.h>
 #include <sys/random.h>
 
-// @TODO: make it so that the websocket can take in both GET & POST parameters.
-// @TODO: make reply to ping/pong to be send only in a limited time.
-// @TODO: add a last active member to remove clients by first sending them a ping and if they dont respond in a limited time delete the memory allocated for these cunts.
-// @TODO: handle fragmentation in the WS spec use a linked list or just send it to the end point handler.
-// @TODO: handle closing so that you can specify a status code indicating the reason for closing.
-
 static const char GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 static const char VALID_WS_RESPONSE[] = "Upgrade: websocket\r\nConnection: Upgrade\r\n";
-static const char WS_SUCCESS_RESPONSE[] = "HTTP/1.1 101 Switching Protocols\r\n";
-static const char WS_FAILURE_RESPONSE[] = "HTTP/1.1 400 Bad Request\r\n";
 
-#define STRLEN_WS_FAIL  26
-#define STRLEN_WS_SUCC  34
-#define STRLEN_VALID_WS 41
-
-// handle the close correctly otherwise freeing already free memory can have unpredictable effects.
-void handle_data(ws_client_t* client, const char* data, size_t len)
-{
-    // printf("state: %d\n", client->state); // DEBUG
-    switch(client->state)
-    {
-        case CL_HANDSHAKE:
-            handle_handshake(client, data);
-            break;
-        case CL_OPEN:
-            handle_open(client, data, len);
-            break;
-        case CL_CLOSED:
-        default:
-            // some code to close and give back the resource allocated.
-            destroy_ws_client(client);
-    }
-}
-
-// modify the handshake with sending different codes according to the reply of the function valid_ws_req.
+/*
 void handle_handshake(ws_client_t* client, const char* data)
 {
     // printf("client handshake begun\n");
@@ -76,15 +47,13 @@ void handle_handshake(ws_client_t* client, const char* data)
     client_write(client->client_data, resp, strnlen(resp, 512));
     // printf("DATA SEND: %s\n", resp);
     client->state = CL_OPEN;
-    client->endpoint = strdup(hshake->resource_name);
-    client->method = strdup(hshake->method);
     free(ws_key);
     free(resp);
     destroy_handshake(hshake);
 }
+*/
 
-// this is not a good idea. enable debug to see if this is even working.
-// make sure to check for the pong flag and if we are expecting a pong before processing any other thing.
+/*
 void handle_open(ws_client_t* client, const void* data, size_t len)
 {
     ws_frame_t* ws_frame;
@@ -139,7 +108,7 @@ void handle_open(ws_client_t* client, const void* data, size_t len)
             if(client->expect_close)
             {
                 destroy_ws_client(client);
-                break;
+                return;
             }
             // printf("client close initiated\n");
             client->state = CL_CLOSED;
@@ -158,13 +127,13 @@ void handle_open(ws_client_t* client, const void* data, size_t len)
     // Delete the payload etc here.
     destroy_ws_frame(ws_frame);
 }
+*/
 
 char* ws_create_accept_hdr(const char* ws_key, const size_t len)
 {
     if (len == 0)
         return NULL;
     // Some code to create the Sec-WebSocket-Accept header depending on the clients Sec-WebSocket-Key.
-    /* @TODO: Error handling for the SHA1. */
     unsigned char sha1[SHA_DIGEST_LENGTH+1];
     SHA_CTX context;
     SHA1_Init(&context);
@@ -174,82 +143,148 @@ char* ws_create_accept_hdr(const char* ws_key, const size_t len)
     return b64_encode(sha1, SHA_DIGEST_LENGTH);
 }
 
-char* handshake_srvr_reply(int success, const char* ws_key_hdr, const char* status_line, const char* other_hdrs)
+char* handshake_srvr_reply(const char* ws_key_hdr, const char* status_line, const char* other_hdrs)
 {
     char* reply = (char* ) malloc(sizeof(char) * (MAX_REPLY_SIZE+1));
-    if(success == SUCCESS_STATUS)
-        strcpy(reply, WS_SUCCESS_RESPONSE);
-    else if(success == CUSTOM_STATUS)
-        strncpy(reply, status_line, 50);
-    else
-        strcpy(reply, WS_FAILURE_RESPONSE);
+    strlcpy(reply, status_line, 70);
     strcat(reply, VALID_WS_RESPONSE);
     strcat(reply, "Sec-WebSocket-Accept: ");
-    char *temp = ws_create_accept_hdr(ws_key_hdr, strnlen(ws_key_hdr, 64));
+    char *temp = ws_create_accept_hdr(ws_key_hdr, strnlen(ws_key_hdr, 50));
     strcat(reply, temp);
-    strcat(reply, "\r\n\r\n");
     if(other_hdrs != NULL)
-        strncat(reply, other_hdrs, MAX_REPLY_SIZE-strlen(reply));
+    {
+        strcat(reply, "\r\n");
+        strlcat(reply, other_hdrs, MAX_REPLY_SIZE-strlen(reply));
+    }
+    strcat(reply, "\r\n\r\n");
+    free(temp);
     return reply;
 }
 
 // if you want the server to be as fast as possible remove the masking of the payload data.
 // @NOTE: this wont allocate memory for the payload, use free(ws_frame) after getting a frame from this function and the
 //        memory management of the payload should be handled by the caller.
-ws_frame_t* construct_ws_frame(uint8_t opcode, void* payload, uint64_t payload_len)
+ws_frame_t* construct_ws_frame(uint8_t opcode, void* payload, uint64_t payload_len, bool mask_data, uint32_t mask_val)
 {
     // This is a check to return if the payload len is much biggger than we expected.
     if(payload_len > 0xfffffff)
         return NULL;
     ws_frame_t* ws_frame = malloc(sizeof(ws_frame_t));
-    ws_frame->mask = 1;
+    ws_frame->fin = 1;
+    if(mask_data)
+    {
+        ws_frame->mask = 1;
+        if(!mask_val)
+            mask_val = get_rand_maskingkey();
+        unmask_data(mask_val, payload, payload_len); // unmasking and masking does the same thing. XOR some value.
+    }
     ws_frame->rsv1 = ws_frame->rsv2 = ws_frame->rsv3 = 0;
-    ws_frame->opcode = opcode;
-    uint32_t masking_key = get_rand_maskingkey();
-    unmask_data(masking_key, payload, payload_len); // unmasking and masking does the same thing. XOR some value.
+    ws_frame->opcode = opcode & 0x0f;
     if(payload_len > 0xffff)
     {
         ws_frame->payload_len = 127;
         ws_frame->inner.op3.payload_len = 0x7fffffffffffffff & payload_len; // to make the most significat byte zero.
-        ws_frame->inner.op3.masking_key = masking_key;
+        ws_frame->inner.op3.masking_key = mask_val;
         ws_frame->inner.op3.payload = payload;
     }
     else if(payload_len < 126)
     {
         ws_frame->payload_len = payload_len;
-        ws_frame->inner.op1.masking_key = masking_key;
+        ws_frame->inner.op1.masking_key = mask_val;
         ws_frame->inner.op1.payload = payload;
     }
     else
     {
         ws_frame->payload_len = 126;
         ws_frame->inner.op2.payload_len = payload_len;
-        ws_frame->inner.op2.masking_key = masking_key;
+        ws_frame->inner.op2.masking_key = mask_val;
         ws_frame->inner.op2.payload = payload;
     }
     return ws_frame;
 }
 
-bool send_ws_frame(ws_client_t* client, uint8_t opcode, void* payload, size_t payload_len)
+// NOTE: This wont fully copy the frame because this wont mask the data.
+ws_frame_t* cpy_ws_frame(const ws_frame_t* to_cpy)
 {
-    ws_frame_t* ws_frame = construct_ws_frame(opcode, (void*)payload, payload_len);
-    // if the payload_len is 0 when the opcode is BINARY DATA or UTF8 DATA it does nothing.
-    if (!ws_frame)
-        return false;
-    if((opcode == INCL_DATA || opcode == INCL_UTF8) && !payload_len)
+    size_t len = get_actual_pay_len(to_cpy);
+    void* payload = memdup(get_actual_payload(to_cpy), len);
+    if(payload == NULL)
+        return NULL;
+    return construct_ws_frame(to_cpy->opcode, payload, len, false, 0);
+}
+
+// This function is hella messy.
+bool expand_payload_ws_frame(ws_frame_t* cur_frame, const void* new_payload, size_t len)
+{
+    size_t old_len;
+    size_t new_len; 
+    void *new_mem, *old_mem;
+    if(cur_frame->payload_len <= 125)
     {
-        free(ws_frame);
-        return false;
+        old_len = cur_frame->payload_len;
+        new_len = len + old_len;
+        if(new_len > 16000000)    // we dont want a frame greater than 16 mb.
+            return false;
+        old_mem = cur_frame->inner.op1.payload;
+        new_mem = realloc(old_mem, new_len);
+        if(new_mem == NULL)
+            return false;
+        cur_frame->inner.op1.payload = new_mem;
+        memcpy(new_mem+old_len, new_payload, len);
+        // Do other stuff to change the payload_len in the second option or the third option
+        if(new_len > 0xffff)
+        {
+            cur_frame->payload_len = 127;
+            cur_frame->inner.op3.payload_len = new_len;
+            cur_frame->inner.op3.payload = new_mem;
+        }
+        else if(new_len > 125)
+        {
+            cur_frame->payload_len = 126;
+            cur_frame->inner.op2.payload_len = new_len;
+            cur_frame->inner.op2.payload = new_mem;
+        }
+        else
+            cur_frame->payload_len = new_len;
+
     }
-    bool ret;
-    uint8_t frame_size = get_len_ws_frame(ws_frame);
-    void* to_send = malloc(frame_size + payload_len);
-    memcpy(to_send, ws_frame, frame_size);
-    memcpy(to_send + frame_size, payload, payload_len);
-    ret = client_write(client->client_data, to_send, frame_size + payload_len);
-    free(to_send);
-    free(ws_frame);
-    return ret;
+    else if(cur_frame->payload_len == 126)
+    {
+        old_len = cur_frame->inner.op2.payload_len;
+        new_len = len + old_len;
+        if(new_len > 16000000)    // we dont want a frame greater than 16 mb.
+            return false;
+        old_mem = cur_frame->inner.op2.payload;
+        new_mem = realloc(old_mem, new_len);
+        if(new_mem == NULL)
+            return false;
+        cur_frame->inner.op2.payload = new_mem;
+        memcpy(new_mem+old_len, new_payload, len);
+        // Do other stuff to change the payload_len in the second option or the third option
+        if(new_len > 0xffff)
+        {
+            cur_frame->payload_len = 127;
+            cur_frame->inner.op3.payload_len = new_len;
+            cur_frame->inner.op3.payload = new_mem;
+        }
+        else
+            cur_frame->inner.op2.payload_len = new_len;
+    }
+    else
+    {
+        old_len = cur_frame->inner.op3.payload_len;
+        new_len = len + old_len;
+        if(new_len > 16000000)    // we dont want a frame greater than 16 mb.
+            return false;
+        old_mem = cur_frame->inner.op3.payload;
+        new_mem = realloc(old_mem, new_len);
+        if(new_mem == NULL)
+            return false;
+        cur_frame->inner.op3.payload = new_mem;
+        memcpy(new_mem+old_len, new_payload, len);
+        // No need to change the payload_len options because 16 Mb is far less than what a 8 byte memory can hold.
+    }
+    return true;
 }
 
 void destroy_ws_frame(ws_frame_t* ws_frame)
@@ -259,46 +294,27 @@ void destroy_ws_frame(ws_frame_t* ws_frame)
     free(ws_frame);
 }
 
-// handles ping by sending a pong opcode checks if the client is valid otherwise it just ignores :dab:.
-// MAX_PAYLOAD length for PING and a PONG is 125: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers.
-void handle_ping(ws_client_t* client, void* payload, uint64_t payload_len)
+inline bool valid_client_frame(ws_frame_t* frame)
 {
-    if(payload_len > 125)
-        return;
-    if(client->state != CL_OPEN)
-        return;
-    send_ws_frame(client, PONG, payload, payload_len);
-}
-
-// send a ping when u get bored or something xd.
-void send_ping(ws_client_t* client, void* payload, uint64_t payload_len)
-{
-    client->expect_pong = 1;
-    send_ws_frame(client, PING, payload, payload_len);
-}
-
-bool valid_client_frame(ws_frame_t* frame)
-{
-    if(!frame->mask)
-        return false;
-    return true;
-}
-
-// more stuff here to do the status code etc and the expect close.
-void handle_close(ws_client_t* client, void* payload, uint64_t payload_len)
-{
-    send_ws_frame(client, TERMINATE, payload, payload_len);
+    return frame->mask;
 }
 
 // gives back the resource allocated for the ws client.
 void destroy_ws_client(ws_client_t* client)
 {
-    free(client->endpoint);
-    free(client->method);
     if(client->last_frame != NULL)
         destroy_ws_frame(client->last_frame);
+    if(client->method != NULL)
+        free(client->method);
+    if(client->uri != NULL)
+        free(client->uri);
     close_io_client(client->client_data);
     free(client);
+}
+
+inline bool transmition_complete(ws_frame_t* frame)
+{
+    return frame->fin;
 }
 
 uint32_t get_rand_maskingkey()
@@ -322,9 +338,11 @@ void unmask_data(uint32_t masking_key, unsigned char* masked, uint64_t payload_l
     }
 }
 
-void* memdup(const void* src, size_t len)
+inline void* memdup(const void* src, size_t len)
 {
     void* memory = malloc(len);
+    if(memory == NULL)
+        return NULL;
     memcpy(memory, src, len);
     return memory;
 }

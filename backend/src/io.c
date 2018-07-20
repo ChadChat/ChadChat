@@ -10,9 +10,6 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
-#define NUM_EPOLL_EVENTS 64
-#define READ_BUFFER_SIZE 4096
-
 static inline int change_event(io_loop_t* loop, int fd, int op, int events, void* data) {
     // register an epoll event on the io loop's epoll handle
     struct epoll_event event = { 0 };

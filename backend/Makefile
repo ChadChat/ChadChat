@@ -1,7 +1,7 @@
 CC        := gcc
 SRC_DIR   := src
 BUILD_DIR := build
-SUB_DIR	  := utils
+SUB_DIR	  := build/utils build/endpoints
 BINARY    := chad
 LIBS	  := -lcrypto -lm
 PREPROC	  := -D DEBUG_ON
@@ -21,6 +21,6 @@ $(BUILD_DIR)/%.o : $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) $(PREPROC) -MMD -MP -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) && mkdir $(BUILD_DIR) && mkdir $(BUILD_DIR)/$(SUB_DIR)
+	rm -rf $(BUILD_DIR) && mkdir $(BUILD_DIR) && mkdir $(SUB_DIR)
 
 -include $(DEPS)

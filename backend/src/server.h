@@ -4,6 +4,7 @@
 #include "io.h"
 #include <stdbool.h>
 
+void server_init();
 void on_client_connect(io_client_t* client);
 void on_client_read(io_client_t* client, const char* data, size_t len);
 bool client_write(void* client, const char* data, size_t len);

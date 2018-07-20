@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define NUM_EPOLL_EVENTS 64
+#define READ_BUFFER_SIZE 4096
+
 typedef struct io_loop_t io_loop_t;
 typedef struct io_client_t io_client_t;
 typedef void (*io_client_cb) (io_client_t* client);

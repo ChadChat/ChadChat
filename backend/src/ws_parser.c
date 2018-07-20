@@ -43,8 +43,8 @@ bool valid_ws_req(StrMap* sm)
     return true;
 }
 
-// will need to create some hash table for storing key:value pairs for the request headers
 // Note: the GET / HTTP/1.1 will not be parsed by this
+// After the call saveptr will point to end of the headers so you can parse any post data that's been sent to the server. 
 StrMap* parse_headers(char* request, char** saveptr)
 {
     StrMap* sm = sm_new(30);
@@ -52,7 +52,7 @@ StrMap* parse_headers(char* request, char** saveptr)
     for(;next != NULL;next = strtok_r(NULL, "\r\n", saveptr))
     {
         trim(next);
-        if(*next == '\0')
+        if(next == NULL)
             break;
         char* value = strchr(next, ':');    // Find ':'
         if(value == NULL)
@@ -69,26 +69,71 @@ StrMap* parse_headers(char* request, char** saveptr)
         // printf("KEY: %s; VALUE: %s\n", next, value);
         sm_put(sm, next, value);
     }
+    *saveptr = next+2;
     return sm;
+}
+
+// Note: we terminate the resource name with NULL but there will still be data after, idk if it's a good practice
+void parse_get_data(ws_handshake* hshake)
+{
+    char *params;
+    if((params = strchr(hshake->resource_name, '?')) == NULL)
+    {
+        return;
+    }
+    *params++ = 0;  // we set the pointer to '?' now the string resource_name is the uri the user requested
+    parse_http_data(hshake, params);
+}
+
+void parse_http_data(ws_handshake* hshake, char* data)
+{
+    if(data == NULL)
+    {
+        hshake->data = NULL;
+        return;
+    }
+    StrMap* sm = sm_new(10);
+
+    char *saveptr, *next;
+    bool first = true;
+    for(next = strtok_r(data, "&", &saveptr); next != NULL && !first; next = strtok_r(NULL, "&", &saveptr))
+    {
+        char* value = strchr(next, '=');
+        if(value == NULL)
+            break;
+        *value++ = 0;
+        sm_put(sm, next, value);
+        first = false;
+    }
+        
+    if(sm_get_count(sm))
+        hshake->data = sm;
+    else
+        hshake->data = NULL;
 }
 
 // Thread-Safe (have to check if parse_headers is thread safe)
 ws_handshake* parse_handshake(const char* req)
 {
-    char request[1024];
-    strncpy(request, req, 1023);
+    char request[2048];
+    strlcpy(request, req, 2047);
     char* saveptr;
     ws_handshake* hshake = malloc(sizeof(ws_handshake));
     char* begin = strtok_r(request, "\r\n", &saveptr);
     char* mtd_end = strchr(request, ' ');
     *(mtd_end++) = 0;
     hshake->method = strndup(request, 6);
+    to_str_upper(hshake->method);
     char* ver_beg = strrchr(mtd_end, ' ');
     *(ver_beg++) = 0;
     hshake->http_version = strndup(ver_beg, 12);
-    hshake->resource_name = strndup(mtd_end, 64);
+    hshake->resource_name = strndup(mtd_end, 256);
     begin = strtok_r(NULL, "\r\n", &saveptr);
     hshake->headers = parse_headers(begin, &saveptr);
+    if(!strcmp("GET", hshake->method))
+        parse_get_data(hshake);
+    else
+        parse_http_data(hshake, saveptr);
     return hshake;
 }
 
@@ -97,8 +142,8 @@ ws_frame_t* parse_frame(const void* data, size_t len, size_t* payload_read)
     ws_frame_t* ws_frame = malloc(sizeof(ws_frame_t));
     *payload_read = 0;
     uint64_t actual_pay_len = get_actual_pay_len(ws_frame);
-    memcpy(ws_frame, data, sizeof(ws_frame_t));  // Have to check for endianess.
-    if(!ws_frame->mask || actual_pay_len > 160000000)   // i dont want a single frame bigger than this. 16 MB is enough.
+    memcpy(ws_frame, data, sizeof(ws_frame_t));
+    if(!ws_frame->mask || actual_pay_len > 5000000)   // i dont want a single frame bigger than this. 5 MB is enough.
     {
         free(ws_frame);
         return NULL;
@@ -144,14 +189,14 @@ ws_frame_t* parse_frame(const void* data, size_t len, size_t* payload_read)
     return ws_frame;
 }
 
-uint64_t get_data_read(ws_frame_t* ws_frame, size_t len_total)
+inline uint64_t get_data_read(ws_frame_t* ws_frame, size_t len_total)
 {
     uint64_t len = len_total - get_len_ws_frame(ws_frame);
     len = len > get_actual_pay_len(ws_frame) ? get_actual_pay_len(ws_frame) : len;
     return len;
 }
 
-uint64_t get_actual_pay_len(ws_frame_t* ws_frame)
+inline uint64_t get_actual_pay_len(const ws_frame_t* ws_frame)
 {
     if(ws_frame->payload_len < 126)
         return ws_frame->payload_len;
@@ -161,7 +206,7 @@ uint64_t get_actual_pay_len(ws_frame_t* ws_frame)
         return ws_frame->inner.op3.payload_len;
 }
 
-uint8_t get_len_ws_frame(ws_frame_t* ws_frame)
+inline uint8_t get_len_ws_frame(const ws_frame_t* ws_frame)
 {
     if(ws_frame->payload_len < 126)
         return WS_FRAME_SIZE_OP1;
@@ -171,7 +216,7 @@ uint8_t get_len_ws_frame(ws_frame_t* ws_frame)
         return WS_FRAME_SIZE_OP3;
 }
 
-uint32_t get_masking_key(ws_frame_t* ws_frame)
+inline uint32_t get_masking_key(const ws_frame_t* ws_frame)
 {
     if(ws_frame->payload_len < 126)
         return ws_frame->inner.op1.masking_key;
@@ -181,7 +226,7 @@ uint32_t get_masking_key(ws_frame_t* ws_frame)
         return ws_frame->inner.op3.masking_key;
 }
 
-void* get_actual_payload(ws_frame_t* ws_frame)
+inline void* get_actual_payload(const ws_frame_t* ws_frame)
 {
     if(ws_frame->payload_len < 126)
         return ws_frame->inner.op1.payload;
@@ -199,7 +244,26 @@ void destroy_handshake(ws_handshake* hshake)
     free(hshake->resource_name);
     free(hshake->http_version);
     sm_delete(hshake->headers);
+    if(hshake->data != NULL)
+        sm_delete(hshake->data);
     free(hshake);
+}
+
+// a callback function to be used from the sm_enum.
+void append_key_val(const char* key, const char* value, char* dest)
+{
+    strcat(dest, key);
+    strcat(dest, ": ");
+    strcat(dest, value);
+    strcat(dest, "\r\n");
+}
+
+// a useful function to fill a buffer with http headers given a strmap.
+void map_to_str(StrMap* sm, char* buf)
+{
+    *buf = 0;
+    sm_enum(sm, append_key_val, buf);
+    strcat(buf, "\r\n");
 }
 
 // Thread-Safe
@@ -267,3 +331,117 @@ void trim(char *str)
 
     str[i - begin] = '\0'; // Null terminate string.
 }
+
+/*	$OpenBSD: strlcpy.c,v 1.11 2006/05/05 15:27:38 millert Exp $	*/
+
+/*
+ * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
+/*
+ * Copy src to string dst of size siz.  At most siz-1 characters
+ * will be copied.  Always NUL terminates (unless siz == 0).
+ * Returns strlen(src); if retval >= siz, truncation occurred.
+ */
+size_t
+strlcpy(char *dst, const char *src, size_t siz)
+{
+	char *d = dst;
+	const char *s = src;
+	size_t n = siz;
+
+	/* Copy as many bytes as will fit */
+	if (n != 0) {
+		while (--n != 0) {
+			if ((*d++ = *s++) == '\0')
+				break;
+		}
+	}
+
+	/* Not enough room in dst, add NUL and traverse rest of src */
+	if (n == 0) {
+		if (siz != 0)
+			*d = '\0';		/* NUL-terminate dst */
+		while (*s++)
+			;
+	}
+
+	return(s - src - 1);	/* count does not include NUL */
+}
+ /*      $OpenBSD: strlcat.c,v 1.2 1999/06/17 16:28:58 millert Exp $     */
+ 
+ /*-
+  * SPDX-License-Identifier: BSD-3-Clause
+  *
+  * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>
+  * All rights reserved.
+  *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions
+  * are met:
+  * 1. Redistributions of source code must retain the above copyright
+  *    notice, this list of conditions and the following disclaimer.
+  * 2. Redistributions in binary form must reproduce the above copyright
+  *    notice, this list of conditions and the following disclaimer in the
+  *    documentation and/or other materials provided with the distribution.
+  * 3. The name of the author may not be used to endorse or promote products
+  *    derived from this software without specific prior written permission.
+  *
+  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+  * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+  * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL
+  * THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+  * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
+ /*
+  * Appends src to string dst of size siz (unlike strncat, siz is the
+  * full size of dst, not space left).  At most siz-1 characters
+  * will be copied.  Always NUL terminates (unless siz <= strlen(dst)).
+  * Returns strlen(src) + MIN(siz, strlen(initial dst)).
+  * If retval >= siz, truncation occurred.
+  */
+ size_t
+ strlcat(char *dst, const char *src, size_t siz)
+ {
+         char *d = dst;
+         const char *s = src;
+         size_t n = siz;
+         size_t dlen;
+ 
+         /* Find the end of dst and adjust bytes left but don't go past end */
+         while (n-- != 0 && *d != '\0')
+                 d++;
+         dlen = d - dst;
+         n = siz - dlen;
+ 
+         if (n == 0)
+                 return(dlen + strlen(s));
+         while (*s != '\0') {
+                 if (n != 1) {
+                         *d++ = *s;
+                         n--;
+                 }
+                 s++;
+         }
+         *d = '\0';
+ 
+         return(dlen + (s - src));       /* count does not include NUL */
+ }

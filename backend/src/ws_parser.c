@@ -66,7 +66,6 @@ StrMap* parse_headers(char* request, char** saveptr)
         to_str_lower(next);
         if(strcmp(next, "sec-websocket-key") != 0)
             to_str_lower(value);
-        // printf("KEY: %s; VALUE: %s\n", next, value);
         sm_put(sm, next, value);
     }
     *saveptr = next+2;
@@ -79,6 +78,7 @@ void parse_get_data(ws_handshake* hshake)
     char *params;
     if((params = strchr(hshake->resource_name, '?')) == NULL)
     {
+        hshake->data = NULL;
         return;
     }
     *params++ = 0;  // we set the pointer to '?' now the string resource_name is the uri the user requested
@@ -87,16 +87,15 @@ void parse_get_data(ws_handshake* hshake)
 
 void parse_http_data(ws_handshake* hshake, char* data)
 {
-    if(data == NULL)
+    if(*data == 0)
     {
         hshake->data = NULL;
         return;
     }
-    StrMap* sm = sm_new(10);
-
+    StrMap* sm = sm_new(20);
     char *saveptr, *next;
     bool first = true;
-    for(next = strtok_r(data, "&", &saveptr); next != NULL && !first; next = strtok_r(NULL, "&", &saveptr))
+    for(next = strtok_r(data, "&", &saveptr); first || next != NULL; next = strtok_r(NULL, "&", &saveptr))
     {
         char* value = strchr(next, '=');
         if(value == NULL)
@@ -107,9 +106,12 @@ void parse_http_data(ws_handshake* hshake, char* data)
     }
         
     if(sm_get_count(sm))
+    {
         hshake->data = sm;
-    else
-        hshake->data = NULL;
+        return;
+    }
+    hshake->data = NULL;
+    sm_delete(sm);
 }
 
 // Thread-Safe (have to check if parse_headers is thread safe)
@@ -141,8 +143,8 @@ ws_frame_t* parse_frame(const void* data, size_t len, size_t* payload_read)
 {
     ws_frame_t* ws_frame = malloc(sizeof(ws_frame_t));
     *payload_read = 0;
-    uint64_t actual_pay_len = get_actual_pay_len(ws_frame);
     memcpy(ws_frame, data, sizeof(ws_frame_t));
+    uint64_t actual_pay_len = get_actual_pay_len(ws_frame);
     if(!ws_frame->mask || actual_pay_len > 5000000)   // i dont want a single frame bigger than this. 5 MB is enough.
     {
         free(ws_frame);
@@ -158,17 +160,17 @@ ws_frame_t* parse_frame(const void* data, size_t len, size_t* payload_read)
 
     if(ws_frame->payload_len < 126)
     {
-        ws_frame->inner.op1.payload = malloc(ws_frame->payload_len);
+        ws_frame->inner.op1.payload = malloc(actual_pay_len);
         memcpy(ws_frame->inner.op1.payload, data + WS_FRAME_SIZE_OP1, *payload_read);
     }
     else if(ws_frame->payload_len == 126)
     {
-        ws_frame->inner.op2.payload = malloc(ws_frame->inner.op2.payload_len);
+        ws_frame->inner.op2.payload = malloc(actual_pay_len);
         memcpy(ws_frame->inner.op2.payload, data + WS_FRAME_SIZE_OP2, *payload_read);
     }
     else
     {
-        ws_frame->inner.op3.payload = malloc(ws_frame->inner.op3.payload_len);
+        ws_frame->inner.op3.payload = malloc(actual_pay_len);
         memcpy(ws_frame->inner.op3.payload, data + WS_FRAME_SIZE_OP3, *payload_read);
     }
     unmask_data(get_masking_key(ws_frame), get_actual_payload(ws_frame), *payload_read);

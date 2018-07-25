@@ -96,6 +96,7 @@ void destroy_ws_frame(ws_frame_t* ws_frame);
 bool valid_client_frame(ws_frame_t* frame);
 void handle_close(ws_client_t* client, void* payload, uint64_t payload_len);
 void destroy_ws_client(ws_client_t* client);
+void close_client(ws_client_t* client);
 bool transmition_complete(ws_frame_t* frame);
 uint32_t get_rand_maskingkey();
 void unmask_data(uint32_t masking_key, unsigned char* masked, uint64_t payload_len);

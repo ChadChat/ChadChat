@@ -63,6 +63,7 @@ typedef struct
             void* data;
         }frame;
     }res_data;
+    bool close_client;
 }response;
 
 typedef response* (*endpoint_cb)(const request* req, const char data_type);
@@ -98,7 +99,7 @@ void endpoint_handshake(const endp* ep, ws_client_t* client, const ws_handshake*
 void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame_mem);
 void handle_ws_req(const endp* ep, ws_client_t* client, const ws_frame_t* frame, const char data_type, endpoint_cb cb);
 void send_ping(const endp* ep, ws_client_t* client, void* payload, size_t pay_len);
-void close_client(const endp* ep, ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len);
+void send_close(const endp* ep, ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len);
 void send_not_found(const endp* ep, ws_client_t* client);
 void destroy_request(request* req);
 void destroy_response(response* resp);

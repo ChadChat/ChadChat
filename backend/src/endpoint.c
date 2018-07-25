@@ -136,13 +136,18 @@ void send_response(const endp* ep, ws_client_t* client, response* res)
             send_ws_frame(ep, client, INCL_UTF8, res->res_data.frame.data, res->res_data.frame.data_len);
         else
             send_ws_frame(ep, client, INCL_DATA, res->res_data.frame.data, res->res_data.frame.data_len);
-        free(res->res_data.frame.data);
+    }
+
+    if(res->close_client)
+    {
+        client->state = CL_CLOSED;
+        destroy_ws_client(client);
     }
 }
 
 void send_ws_frame(const endp* ep, ws_client_t* client, uint8_t opcode, void* payload, size_t payload_len)
 {
-    ws_frame_t* ws_frame = construct_ws_frame(opcode, (void*)payload, payload_len, false, 0);
+    ws_frame_t* ws_frame = construct_ws_frame(opcode, (void*)payload, payload_len, true, 0);
     // if the payload_len is 0 when the opcode is BINARY DATA or UTF8 DATA it does nothing.
     if (!ws_frame)
         return;
@@ -174,6 +179,7 @@ void handle_data(const endp* ep, ws_client_t* client, const char* data, size_t l
         case CL_CLOSED:
         default:
             // some code to close and give back the resource allocated.
+            close_client(client);
             destroy_ws_client(client);
     }
 }
@@ -206,6 +212,7 @@ void handle_open(const endp *ep, ws_client_t* client, const void* data, size_t l
         {
             // this means that the data was much bigger than we expeceted. So just delete this cunt without sending the TERMINATE message.
             client->state = CL_CLOSED;
+            close_client(client);
             destroy_ws_client(client);
             return;
         }
@@ -250,7 +257,9 @@ void endpoint_handshake(const endp* ep, ws_client_t* client, const ws_handshake*
     req->req_data.hshake.data = hshake->data;
     response* res = cb(req, ALL_TYPE);
     res->res_data.hshake.accept = malloc(WS_KEY_LEN+12);
-    sm_get(res->res_data.hshake.headers, "sec-websocket-key", res->res_data.hshake.accept, WS_KEY_LEN+11);
+    sm_get(req->req_data.hshake.headers, "sec-websocket-key", res->res_data.hshake.accept, WS_KEY_LEN+11);
+    if(!res->close_client)
+        client->state = CL_OPEN;
     send_response(ep, client, res);
     destroy_request(req);
     destroy_response(res);
@@ -304,11 +313,13 @@ void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame
         case TERMINATE:
             if(client->expect_close)
             {
+                close_client(client);
                 destroy_ws_client(client);
                 break;
             }
             client->state = CL_CLOSED;
             send_ws_frame(ep, client, TERMINATE, get_actual_payload(frame), get_actual_pay_len(frame));
+            // close_client(client); SOMETIMES i think the io.c closes the client automatically Valgrind was showing some stuff.
             destroy_ws_client(client);
             break;
         case PING:
@@ -349,7 +360,7 @@ inline void send_ping(const endp* ep, ws_client_t* client, void* payload, size_t
 
 
 // These are the closing status code defined in ws.h
-void close_client(const endp* ep, ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len)
+void send_close(const endp* ep, ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len)
 {
     size_t pay_len = sizeof(uint16_t) + reason_len;
     void* payload = malloc(pay_len);
@@ -363,20 +374,21 @@ void close_client(const endp* ep, ws_client_t* client, uint16_t status_code, con
 void send_not_found(const endp* ep, ws_client_t* client)
 {
     response* resp = malloc(sizeof(response));
+    resp->res_type = HNDL_HSHAKE;
     resp->res_data.hshake.status = NOT_FOUND;
+    resp->res_data.hshake.headers = NULL;
+    resp->res_data.hshake.accept = strdup("Nope");
+    resp->close_client = true;
     send_response(ep, client, resp);
     destroy_response(resp);
 }
 
-void destroy_request(request* req)
+inline void destroy_request(request* req)
 {
-    if(req->req_type == HNDL_HSHAKE)
-    {
-        sm_delete(req->req_data.hshake.headers);
-        sm_delete(req->req_data.hshake.data);
-    }
-    else
+    /*
+    if(req->req_type == HNDL_FRAME)
         free(req->req_data.frame.data);
+    */
     free(req);
 }
 

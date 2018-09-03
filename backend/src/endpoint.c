@@ -15,6 +15,7 @@ static const char STATUS_400[] = "Bad Request\r\n";
 static const char STATUS_401[] = "Unauthorized\r\n";
 static const char STATUS_403[] = "Forbidden\r\n";
 static const char STATUS_404[] = "Not Found\r\n";
+static const char STATUS_410[] = "Wrong Username\r\n";
 
 static const char VALID_WS_RESPONSE[] = "Upgrade: websocket\r\nConnection: Upgrade\r\n";
 static const char WS_FAILURE_RESPONSE[] = "HTTP/1.1 400 Bad Request\r\n";
@@ -117,6 +118,8 @@ void send_response(const endp* ep, ws_client_t* client, response* res)
             case NOT_FOUND:
                 strcat(status_line, STATUS_404);
                 break;
+            case USERNAME_NOT_AVAIL:
+                strcat(status_line, STATUS_410);
             case NOT_MODIFIED:
             default:
                 strcat(status_line, STATUS_304);
@@ -255,7 +258,8 @@ void endpoint_handshake(const endp* ep, ws_client_t* client, const ws_handshake*
     req->req_type = HNDL_HSHAKE;
     req->req_data.hshake.headers = hshake->headers;
     req->req_data.hshake.data = hshake->data;
-    response* res = cb(req, ALL_TYPE);
+    endp_client* ep_client = (endp_client *)client->id;
+    response* res = cb(req, ALL_TYPE, ep_client);
     res->res_data.hshake.accept = malloc(WS_KEY_LEN+12);
     sm_get(req->req_data.hshake.headers, "sec-websocket-key", res->res_data.hshake.accept, WS_KEY_LEN+11);
     if(!res->close_client)
@@ -347,7 +351,8 @@ inline void handle_ws_req(const endp* ep, ws_client_t* client, const ws_frame_t*
     req->req_type = HNDL_FRAME;
     req->req_data.frame.data = get_actual_payload(frame);
     req->req_data.frame.data_len = get_actual_pay_len(frame);
-    response* res = cb(req, data_type);
+    endp_client* ep_client = (endp_client *)client->id;
+    response* res = cb(req, data_type, ep_client);
     send_response(ep, client, res);
     destroy_request(req);
     destroy_response(res);

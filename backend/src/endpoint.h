@@ -24,8 +24,15 @@
 #define UNAUTHORIZED 401
 #define FORBIDDEN 403
 #define NOT_FOUND 404
+#define USERNAME_NOT_AVAIL 410 // This is a user defined status code.
 
 #define PING_TIMEOUT 10
+
+typedef struct {
+    uint16_t client_id;
+    StrMap* key_vals;
+    void* data;
+}endp_client;
 
 typedef struct
 {
@@ -66,7 +73,7 @@ typedef struct
     bool close_client;
 }response;
 
-typedef response* (*endpoint_cb)(const request* req, const char data_type);
+typedef response* (*endpoint_cb)(const request* req, const char data_type, endp_client* ep_client);
 typedef bool (*write_cb)(void* client, const char* data, size_t len);
 
 typedef struct

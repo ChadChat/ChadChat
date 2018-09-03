@@ -71,11 +71,11 @@ typedef struct
 
 }  __attribute__((packed, scalar_storage_order("big-endian"))) ws_frame_t;  // this attribute thing will only work above < GCC 6.2
 
+// typedef void (*destroy_cb)(void *data);
 
 // Struct for handling each client.
 typedef struct
 {
-    uint16_t id;
     uint8_t state: 4, pong: 2, expect_close: 2;   // A state value indicating the state of the client and a flag to see if there's more to read.
     ws_frame_t* last_frame; // This is useful when we want to handle fragmented packets due to the buffer limit in the read section.
     ws_frame_t* fragmented_frame;   // This is unseful when we want to handle fragmentation in the websocket specification level.
@@ -84,6 +84,8 @@ typedef struct
     char* uri;
     char* method;
     void* client_data;
+    void* id;
+    destroy_cb id_cb;    
 } ws_client_t;
 // the pong flag of the struct indicates that we got the pong back.
 

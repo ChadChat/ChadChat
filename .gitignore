@@ -1,6 +1,8 @@
 *.d
 *.o
+*/compile_commands.json
 backend/chad
 dev/
 .vscode
+*.vim
 node_modules

@@ -198,6 +198,7 @@ void destroy_ws_client(ws_client_t* client)
         free(client->method);
     if(client->uri != NULL)
         free(client->uri);
+    client->id_cb(client->id);
     free(client);
 }
 

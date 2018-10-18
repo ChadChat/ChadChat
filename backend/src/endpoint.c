@@ -27,15 +27,15 @@ static const char WS_FAILURE_RESPONSE[] = "HTTP/1.1 400 Bad Request\r\n";
 //        If it's too long then send a ping and if we dont get the pong back in some time then close the client.
 // @TODO: handle fragmentation in send_ws_frame if the payload size is greater than some value split it up and send as a fragmented message.
 
-endp* init_endpoint(write_cb cb)
+static endp ep;
+
+void init_endpoint(write_cb cb)
 {
-    endp* ep = malloc(sizeof(endp));
-    ep->cb_funcs = hmap_init(50, destroy_member);
-    ep->write_to = cb;
-    return ep;
+    ep.cb_funcs = hmap_init(50, destroy_member);
+    ep.write_to = cb;
 }
 
-void register_endpoint(endp* ep, const char* url, char type, const char* method, endpoint_cb cb_func)
+void register_endpoint(const char* url, char type, const char* method, endpoint_cb cb_func)
 {
     cb_list* member = malloc(sizeof(cb_list));
     member->cb = cb_func;
@@ -43,22 +43,21 @@ void register_endpoint(endp* ep, const char* url, char type, const char* method,
     member->data_type = type;
     member->next = NULL;
 
-    if(!hmap_exists(ep->cb_funcs, url))
-        hmap_insert(ep->cb_funcs, url, (void*) member);
+    if(!hmap_exists(ep.cb_funcs, url))
+        hmap_insert(ep.cb_funcs, url, (void*) member);
     else
     {
         // adds it to the tail of the list.
         cb_list* list;
-        hmap_get(ep->cb_funcs, url, (void**) &list);
+        hmap_get(ep.cb_funcs, url, (void**) &list);
         for(; list->next != NULL; list = list->next) {}
         list->next = member;
     }
 }
 
-void destroy_endpoint(endp* ep)
+void destroy_endpoint()
 {
-    hmap_delete(ep->cb_funcs);
-    free(ep);
+    hmap_delete(ep.cb_funcs);
 }
 
 // This function will be called by the hashmap to destroy the linked list data that we put in it.
@@ -74,12 +73,12 @@ void destroy_member(void* member)
 }
 
 // There's kind of a bug here where it just returns 1 function with even when other functions register for multiple data types.
-static endpoint_cb get_endpoint_cb(const endp* ep, const char* url, const char* method, char data_type)
+static endpoint_cb get_endpoint_cb(const char* url, const char* method, char data_type)
 {
-    if(!hmap_exists(ep->cb_funcs, url))
+    if(!hmap_exists(ep.cb_funcs, url))
         return NULL;
     cb_list* list;
-    hmap_get(ep->cb_funcs, url, (void**)&list);
+    hmap_get(ep.cb_funcs, url, (void**)&list);
 
     // i used a binary trick to check if they call back function takes in the data type it gave, consult me if you are still confused.
     for(;list != NULL; list = list->next)
@@ -88,7 +87,7 @@ static endpoint_cb get_endpoint_cb(const endp* ep, const char* url, const char* 
     return NULL;
 }
 
-void send_response(const endp* ep, ws_client_t* client, response* res)
+void send_response(ws_client_t* client, response* res)
 {
     if(res->res_type == HNDL_HSHAKE)
     {
@@ -130,15 +129,15 @@ void send_response(const endp* ep, ws_client_t* client, response* res)
         else
             other_hdrs[0] = 0;
         char* reply = handshake_srvr_reply(res->res_data.hshake.accept, status_line, other_hdrs);
-        ep->write_to(client->client_data, reply, strlen(reply));
+        ep.write_to(client->client_data, reply, strlen(reply));
         free(reply);
     }
     else if(res->res_type == HNDL_FRAME)
     {
         if(res->res_data.frame.is_utf8)
-            send_ws_frame(ep, client, INCL_UTF8, res->res_data.frame.data, res->res_data.frame.data_len);
+            send_ws_frame(client, INCL_UTF8, res->res_data.frame.data, res->res_data.frame.data_len);
         else
-            send_ws_frame(ep, client, INCL_DATA, res->res_data.frame.data, res->res_data.frame.data_len);
+            send_ws_frame(client, INCL_DATA, res->res_data.frame.data, res->res_data.frame.data_len);
     }
 
     if(res->close_client)
@@ -148,7 +147,7 @@ void send_response(const endp* ep, ws_client_t* client, response* res)
     }
 }
 
-void send_ws_frame(const endp* ep, ws_client_t* client, uint8_t opcode, void* payload, size_t payload_len)
+void send_ws_frame(ws_client_t* client, uint8_t opcode, void* payload, size_t payload_len)
 {
     ws_frame_t* ws_frame = construct_ws_frame(opcode, (void*)payload, payload_len, true, 0);
     // if the payload_len is 0 when the opcode is BINARY DATA or UTF8 DATA it does nothing.
@@ -163,21 +162,21 @@ void send_ws_frame(const endp* ep, ws_client_t* client, uint8_t opcode, void* pa
     void* to_send = malloc(frame_size + payload_len);
     memcpy(to_send, ws_frame, frame_size);
     memcpy(to_send + frame_size, payload, payload_len);
-    ep->write_to(client->client_data, to_send, frame_size + payload_len);
+    ep.write_to(client->client_data, to_send, frame_size + payload_len);
     free(to_send);
     free(ws_frame);
 }
 
 // handle the close correctly otherwise freeing already free memory can have unpredictable effects.
-void handle_data(const endp* ep, ws_client_t* client, const char* data, size_t len)
+void handle_data(ws_client_t* client, const char* data, size_t len)
 {
     switch(client->state)
     {
         case CL_HANDSHAKE:
-            handle_handshake(ep, client, data);
+            handle_handshake(client, data);
             break;
         case CL_OPEN:
-            handle_open(ep, client, data, len);
+            handle_open(client, data, len);
             break;
         case CL_CLOSED:
         default:
@@ -187,7 +186,7 @@ void handle_data(const endp* ep, ws_client_t* client, const char* data, size_t l
     }
 }
 
-void handle_handshake(const endp* ep, ws_client_t* client, const char* data)
+void handle_handshake(ws_client_t* client, const char* data)
 {
     ws_handshake* hshake = parse_handshake(data);
     if(strcmp(hshake->http_version, "HTTP/1.1") != 0)
@@ -196,17 +195,17 @@ void handle_handshake(const endp* ep, ws_client_t* client, const char* data)
         strcat(resp, WS_FAILURE_RESPONSE);
         strcat(resp, VALID_WS_RESPONSE);
         strcat(resp, "\r\n");
-        ep->write_to(client->client_data, resp, STRLEN_WS_FAIL+STRLEN_VALID_WS);
+        ep.write_to(client->client_data, resp, STRLEN_WS_FAIL+STRLEN_VALID_WS);
         client->state = CL_CLOSED;
         free(resp);
         destroy_handshake(hshake);
         return;
     }
-    endpoint_handshake(ep, client, hshake);
+    endpoint_handshake(client, hshake);
     destroy_handshake(hshake);
 }
 
-void handle_open(const endp *ep, ws_client_t* client, const void* data, size_t len)
+void handle_open(ws_client_t* client, const void* data, size_t len)
 {
     ws_frame_t* frame;
     if((frame = client->last_frame) == NULL)
@@ -232,17 +231,17 @@ void handle_open(const endp *ep, ws_client_t* client, const void* data, size_t l
     {
         return;
     }
-    endpoint_data_frame(ep, client, &frame);
+    endpoint_data_frame(client, &frame);
     destroy_ws_frame(frame);
 }
 
-void endpoint_handshake(const endp* ep, ws_client_t* client, const ws_handshake* hshake)
+void endpoint_handshake(ws_client_t* client, const ws_handshake* hshake)
 {
-    endpoint_cb cb = get_endpoint_cb(ep, hshake->resource_name, hshake->method, ALL_TYPE);
+    endpoint_cb cb = get_endpoint_cb(hshake->resource_name, hshake->method, ALL_TYPE);
     if(cb == NULL)
     {
         // send a resource not found error (404)
-        send_not_found(ep, client);
+        send_not_found(client);
         return;
     }
 
@@ -264,14 +263,14 @@ void endpoint_handshake(const endp* ep, ws_client_t* client, const ws_handshake*
     sm_get(req->req_data.hshake.headers, "sec-websocket-key", res->res_data.hshake.accept, WS_KEY_LEN+11);
     if(!res->close_client)
         client->state = CL_OPEN;
-    send_response(ep, client, res);
+    send_response(client, res);
     destroy_request(req);
     destroy_response(res);
 }
 
 // ************* handle the ping, pong using some kind of scheduler to notify of our state.
 // Average IQ of 1000 to read this function
-void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame_mem)
+void endpoint_data_frame(ws_client_t* client, ws_frame_t** frame_mem)
 {
     ws_frame_t* frame = *frame_mem;
     if(!frame->fin)
@@ -303,16 +302,16 @@ void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame
     switch(frame->opcode)
     {
         case INCL_UTF8:
-            cb = get_endpoint_cb(ep, client->uri, client->method, UTF8_TYPE);
+            cb = get_endpoint_cb(client->uri, client->method, UTF8_TYPE);
             if (cb == NULL)
                 break;  // ********** Do some code here *************
-            handle_ws_req(ep, client, frame, UTF8_TYPE, cb);
+            handle_ws_req(client, frame, UTF8_TYPE, cb);
             break;
         case INCL_DATA:
-            cb = get_endpoint_cb(ep, client->uri, client->method, BIN_TYPE);
+            cb = get_endpoint_cb(client->uri, client->method, BIN_TYPE);
             if (cb == NULL)
                 break;  // ********** Do some code here *************
-            handle_ws_req(ep, client, frame, BIN_TYPE, cb);
+            handle_ws_req(client, frame, BIN_TYPE, cb);
             break;
         case TERMINATE:
             if(client->expect_close)
@@ -322,7 +321,7 @@ void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame
                 break;
             }
             client->state = CL_CLOSED;
-            send_ws_frame(ep, client, TERMINATE, get_actual_payload(frame), get_actual_pay_len(frame));
+            send_ws_frame(client, TERMINATE, get_actual_payload(frame), get_actual_pay_len(frame));
             // close_client(client); SOMETIMES i think the io.c closes the client automatically Valgrind was showing some stuff.
             destroy_ws_client(client);
             break;
@@ -333,7 +332,7 @@ void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame
                 // MAX_PAYLOAD length for PING and a PONG is 125: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers.
                 if(pay_len > 125)
                     break;
-                send_ws_frame(ep, client, PONG, get_actual_payload(frame), pay_len);
+                send_ws_frame(client, PONG, get_actual_payload(frame), pay_len);
                 // Update the client data to check the last time we replied
                 client->last_ping = time(NULL);
             }
@@ -345,7 +344,7 @@ void endpoint_data_frame(const endp* ep, ws_client_t* client, ws_frame_t** frame
 
 }
 
-inline void handle_ws_req(const endp* ep, ws_client_t* client, const ws_frame_t* frame, const char data_type, endpoint_cb cb)
+inline void handle_ws_req(ws_client_t* client, const ws_frame_t* frame, const char data_type, endpoint_cb cb)
 {
     request* req = malloc(sizeof(request));
     req->req_type = HNDL_FRAME;
@@ -353,30 +352,30 @@ inline void handle_ws_req(const endp* ep, ws_client_t* client, const ws_frame_t*
     req->req_data.frame.data_len = get_actual_pay_len(frame);
     endp_client* ep_client = (endp_client *)client->id;
     response* res = cb(req, data_type, ep_client);
-    send_response(ep, client, res);
+    send_response(client, res);
     destroy_request(req);
     destroy_response(res);
 }
 
-inline void send_ping(const endp* ep, ws_client_t* client, void* payload, size_t pay_len)
+inline void send_ping(ws_client_t* client, void* payload, size_t pay_len)
 {
-    send_ws_frame(ep, client, PING, payload, pay_len);
+    send_ws_frame(client, PING, payload, pay_len);
 }
 
 
 // These are the closing status code defined in ws.h
-void send_close(const endp* ep, ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len)
+void send_close(ws_client_t* client, uint16_t status_code, const void* reason, size_t reason_len)
 {
     size_t pay_len = sizeof(uint16_t) + reason_len;
     void* payload = malloc(pay_len);
     status_code = htons(status_code);
     memcpy(payload, (void*) &status_code, sizeof(uint16_t));
     memcpy(payload + sizeof(uint16_t), reason, reason_len);
-    send_ws_frame(ep, client, TERMINATE, payload, pay_len);
+    send_ws_frame(client, TERMINATE, payload, pay_len);
     client->expect_close = 1;
 }
 
-void send_not_found(const endp* ep, ws_client_t* client)
+void send_not_found(ws_client_t* client)
 {
     response* resp = malloc(sizeof(response));
     resp->res_type = HNDL_HSHAKE;
@@ -384,7 +383,7 @@ void send_not_found(const endp* ep, ws_client_t* client)
     resp->res_data.hshake.headers = NULL;
     resp->res_data.hshake.accept = strdup("Nope");
     resp->close_client = true;
-    send_response(ep, client, resp);
+    send_response(client, resp);
     destroy_response(resp);
 }
 

@@ -27,7 +27,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
         sm_get(req->req_data.hshake.data, "username", username, 255);
         hmap_get(globals, "clients", &clients);
         int user_index = LIST_find(clients, username, user_exists);  // Check if username exists
-        if(user_index != -1)
+        if(user_index == -1)
         {
             res->res_type = HNDL_HSHAKE;
             res->res_data.hshake.status = USERNAME_NOT_AVAIL;
@@ -62,7 +62,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
                 DHM_setIV(user->key_bundle, data);   // This only copies the first 16 bytes
                 B_len = data[IV_LEN_BYTES] | (data[IV_LEN_BYTES+1] << 8);
                 DHM_generate_secret_key(user->key_bundle, B, (int)B_len);
-                user->status = USER_OPEN;
+                user->status = SEND_COOKIE;
                 A = DHM_get_key_bundle(user->key_bundle, &temp);
                 A_len = temp & 0xffff;
                 res->res_data.frame.data_len = 2 + A_len;
@@ -81,6 +81,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
         res->res_type = HNDL_FRAME;
         res->res_data.frame.is_utf8 = false;
     }
+    /*
     A = DHM_get_key_bundle(alice, &A_len);
     B = DHM_get_key_bundle(bob, &B_len);
     DHM_generate_secret_key(alice, B, B_len);
@@ -89,6 +90,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
     DHM_destroy(bob);
     free(A);
     free(B);
+    */
     return res;
 }
 

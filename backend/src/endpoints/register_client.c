@@ -16,6 +16,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
     memset(res, 0, sizeof(response));
     if(req->req_type == HNDL_HSHAKE)
     {
+        // if the username is not in the get request return bad_request.
         if((req->req_data.hshake.data == NULL) || !(sm_exists(req->req_data.hshake.data, "username")))
         {
             res->res_type = HNDL_HSHAKE;
@@ -43,6 +44,7 @@ response* get_register_client(const request* req, const char data_type, endp_cli
         user->status = USER_INIT;
         LIST_insert(clients, user);
         ep_client->data = user;
+        // add task here to remove the client resources if the client doesn't reply back in 5 seconds
         res->res_type = HNDL_HSHAKE;
         res->res_data.hshake.status = SUCCESS;
         res->res_data.hshake.headers = NULL;

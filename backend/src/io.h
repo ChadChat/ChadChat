@@ -8,8 +8,6 @@
 #define NUM_EPOLL_EVENTS 64
 #define READ_BUFFER_SIZE 4096
 
-#define TASK_RM_MULTIPLE 5
-
 typedef struct io_loop_t io_loop_t;
 typedef struct io_client_t io_client_t;
 typedef void (*io_client_cb) (io_client_t* client);
@@ -38,18 +36,6 @@ struct io_loop_t {
     io_client_cb on_connect;
     io_client_list_t client_list;
 };
-
-typedef struct {
-   time_t when;
-   void* state;
-   simple_cb cb_func
-} IO_task;
-
-// Add new task to the io.
-uint32_t add_new_task(int time_off, void* state, simple_cb cb_func);
-void change_task(uint32_t task_no, int time_off, void* state, simple_cb cb_func);
-void delete_task(uint32_t task_no);
-
 
 // create server socket and poll handle for io loop 
 bool io_loop_init(io_loop_t* loop, int port);

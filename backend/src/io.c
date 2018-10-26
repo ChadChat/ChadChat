@@ -10,47 +10,8 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
-static IO_task* all_tasks;
-static uint32_t num_tasks = 0;
-
-// adds new task to the queue.
-int add_new_task(int time_off, void* state, simple_cb cb_func) {
-   all_tasks[num_tasks] = malloc(sizeof(IO_task));
-   all_tasks[num_tasks].when = time(NULL) + time_off;
-   all_tasks[num_tasks].state = state;
-   all_tasks[num_tasks].cb_func = cb_func;
-   return num_tasks++;
-}
-
-// changes the task struct.
-void change_task(uint32_t task_no, int time_off, void* state, simple_cb cb_func) {
-   if (time_off != 0)
-       all_tasks[task_no].when = time(NULL) + time_off;
-   if (state != NULL)
-       all_tasks[task_no].state = state;
-   if (cb_func != NULL)
-       all_tasks[task_no].cb_func = cb_func;
-}
-
-// deletes the task (I optimized it).
-void delete_task(uint32_t task_no) {
-   static char tasks_to_remove = 0;
-   static uint32_t tasks_indexs[TASK_RM_MULTIPLE];
-
-   // speed up the process of only freeing and rearraging if it's 5.
-   if(tasks_to_remove == TASK_RM_MULTIPLE) {
-      for (char i = 0; i < TASK_RM_MULTIPLE; i++) {
-          // first sort it in the reverse order then remove each item one by one.
-          // This optimizes the removing
-          // @TODO: Code to reverse here
-      }
-      tasks_to_remove = 0;
-   } else {
-      all_tasks[task_no].when = 0;  // I made an if statement so that the loop ignores if the time is 0.
-      tasks_to_remove++;
-   }
-
-}
+extern IO_task* all_tasks;
+extern int num_tasks = 0; 
 
 static inline int change_event(io_loop_t* loop, int fd, int op, int events, void* data) {
     // register an epoll event on the io loop's epoll handle
@@ -278,6 +239,7 @@ int io_loop_run(io_loop_t* loop) {
         for (int i = 0; i < num_tasks; i++) {
             if(all_tasks[i].when != 0 && now >= all_tasks[i].when) {
                all_tasks[i].cb_func(all_tasks[i].state);
+               all_tasks[i].task_state = TASK_DONE;
             }
         }
         

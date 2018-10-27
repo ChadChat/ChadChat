@@ -22,8 +22,10 @@ typedef struct {
 } IO_task;
 
 // Add new task to the io.
+void task_init(void);
 int task_add_new(int time_off, void* state, simple_cb cb_func);
 void task_change(int task_no, int time_off, void* state, simple_cb cb_func);
 void task_delete(int task_no);
+void task_destroy(void);
 
 #endif /* ifndef TASK_IMP_CHAD */

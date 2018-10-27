@@ -7,12 +7,11 @@ int num_tasks = 0;
 //    Every element after the task is either done or terminated, or daemonized
 
 
-// make this memory management work!!
 void task_init(void) {
-   all_tasks = calloc(MAX_TASKS, sizeof(IO_task*));
+   &all_tasks = calloc(MAX_TASKS, sizeof(IO_task*));
 }
 
-int add_new_task(int time_off, void* state, simple_cb cb_func char daemon) {
+int task_add_new(int time_off, void* state, simple_cb cb_func char daemon) {
    if(num_tasks >= MAX_TASKS)
        return -1;
    all_tasks[num_tasks] = malloc(sizeof(IO_task));
@@ -27,7 +26,7 @@ int add_new_task(int time_off, void* state, simple_cb cb_func char daemon) {
 }
 
 // changes the task struct.
-void change_task(int task_no, int time_off, void* state, simple_cb cb_func) {
+void task_change(int task_no, int time_off, void* state, simple_cb cb_func) {
    if (time_off != 0)
        all_tasks[task_no].when = time(NULL) + time_off;
    if (state != NULL)
@@ -45,7 +44,7 @@ static int compare_ints(const void* _i1, const void* _i2)
 }
 
 // deletes the task (I optimized it).
-void delete_task(int task_no) {
+void task_delete(int task_no) {
    static char tasks_to_remove = 0;
    static int tasks_indexs[TASK_RM_MULTIPLE];
 

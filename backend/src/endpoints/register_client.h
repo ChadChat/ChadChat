@@ -3,8 +3,11 @@
 
 #include "../endpoint.h"
 
-#define USER_INIT 1
-#define SEND_COOKIE 2
+#define USER_INIT 0
+#define USER_OPEN 1
+#define USER_END 2
+
+#define COOKIE_LEN 64
 
 typedef struct
 {
@@ -12,6 +15,7 @@ typedef struct
     DHM* key_bundle;
     char* cookie;
     char status;
+    int task_number;
 }user_profile;
 
 #endif // REG_CLIENT_IMP_CHAD

@@ -126,6 +126,7 @@ bool io_loop_init(io_loop_t* loop, int port) {
         return false;
     }
 
+    task_init();  // initialize the tasker.
     return true;
 }
 
@@ -143,12 +144,13 @@ int io_loop_run(io_loop_t* loop) {
     char read_buffer[READ_BUFFER_SIZE + 1];
     struct epoll_event events[NUM_EPOLL_EVENTS];
     time_t now;
+    int timeout = -1;   // init with -1 so that it can block indefinitely.
 
     // main event loop
     while (true) {
 
         // iterate through received io events
-        int num_events = epoll_wait(loop->poll_fd, events, NUM_EPOLL_EVENTS, -1);
+        int num_events = epoll_wait(loop->poll_fd, events, NUM_EPOLL_EVENTS, timeout);
         while (num_events--) {
             event = events[num_events];
             client = (io_client_t*) event.data.ptr;
@@ -236,10 +238,19 @@ int io_loop_run(io_loop_t* loop) {
 
         // Simple Tasker(Scheduler?) stuff here.
         now = time(NULL)
+        timeout = -1;   // set it to -1 each time.
+        int time_togo;
         for (int i = 0; i < num_tasks; i++) {
-            if(all_tasks[i].when != 0 && now >= all_tasks[i].when) {
+            // first the task_state should be TASK_OPN
+            if (all_tasks[i].task_state == TASK_OPEN && now >= all_tasks[i].when) {
                all_tasks[i].cb_func(all_tasks[i].state);
-               all_tasks[i].task_state = TASK_DONE;
+               task_delete(i);
+            } else {
+               time_togo = when-now;
+               if (timeout == -1)      // initialization
+                   timeout = time_togo;
+               if (time_togo < timeout)// Only change if it's lower.
+                   timeout = time_togo;
             }
         }
         

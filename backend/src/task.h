@@ -8,11 +8,13 @@
 #define TASK_RM_MULTIPLE 8
 
 #define TASK_OPEN 0
-#define TASK_OPEN_DMN 1
-#define TASK_DONE 2
-#define TASK_TERM 3
+#define TASK_DONE 1
 
 #define MAX_TASKS 8196
+
+#define task_complete(io_task) ((io_task)->task_state == TASK_DONE)
+
+typedef void (*simple_cb)(void* state);
 
 typedef struct {
    char task_state;

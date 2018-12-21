@@ -3,30 +3,52 @@
 IO_task* all_tasks;
 int num_tasks = 0;
 
-// only free and transverse the array if:
-//    Every element after the task is either done or terminated, or daemonized
 
-
-void task_init(void) {
+void task_init(void)
+{
    &all_tasks = calloc(MAX_TASKS, sizeof(IO_task*));
 }
 
-int task_add_new(int time_off, void* state, simple_cb cb_func char daemon) {
-   if(num_tasks >= MAX_TASKS)
+int task_add_new(int time_off, void* state, simple_cb cb_func, char daemon)
+{
+   int task_no;
+   // see if there's any done tasks in the list.
+   if ((task_no = task_free()) != -1) {
+       all_tasks[task_no].when = time(NULL) + time_off;
+       all_tasks[task_no].state = state;
+       all_tasks[task_no].cb_func = cb_func;
+       all_tasks[task_no].when = TASK_OPEN;
+       return task_no;
+   }
+
+   if (num_tasks >= MAX_TASKS)
        return -1;
+
    all_tasks[num_tasks] = malloc(sizeof(IO_task));
    all_tasks[num_tasks].when = time(NULL) + time_off;
    all_tasks[num_tasks].state = state;
    all_tasks[num_tasks].cb_func = cb_func;
-   if (daemon)
-      all_tasks[num_tasks].task_state = TASK_OPEN_DMN;
-   else
-      all_tasks[num_tasks].task_state = TASK_OPEN;
+   all_tasks[num_tasks].task_state = TASK_OPEN;
    return num_tasks++;
 }
 
+static int task_free(void)
+{
+   for (int i = 0; i < num_tasks; i++) {
+       // return the task_number if either the task is done or terminated.
+       if (all_tasks[i].task_state == TASK_DONE)
+           return i;
+   }
+   return -1;
+}
+
 // changes the task struct.
-void task_change(int task_no, int time_off, void* state, simple_cb cb_func) {
+void task_change(int task_no, int time_off, void* state, simple_cb cb_func)
+{
+   // only change the task stuff if it's valid.
+   if (all_tasks[task_no] != TASK_OPEN)
+      return;
+
    if (time_off != 0)
        all_tasks[task_no].when = time(NULL) + time_off;
    if (state != NULL)
@@ -35,45 +57,44 @@ void task_change(int task_no, int time_off, void* state, simple_cb cb_func) {
        all_tasks[task_no].cb_func = cb_func;
 }
 
-// simple integer compare function for a one time use.
-static int compare_ints(const void* _i1, const void* _i2)
-{
-    int i1 = *((int*)_i1);
-    int i2 = *((int*)_i2);
-    return (i1 > i2) - (i1 < i2);
-}
-
 // deletes the task (I optimized it).
-void task_delete(int task_no) {
-   static char tasks_to_remove = 0;
-   static int tasks_indexs[TASK_RM_MULTIPLE];
+void task_delete(int task_no)
+{
+   static int tasks_to_remove = 0;
 
-   all_tasks[task_no].when = 0;  // I made an if statement so that the loop ignores if the time is 0.
-   tasks_indexs[tasks_to_remove] = task_no;
+   // only if it's valid.
+   if (all_tasks[task_no].task_state != TASK_OPEN)
+       return;
+
+   all_tasks[task_no].task_state = TASK_DONE;
    tasks_to_remove++;
 
-   // speed up the process of only freeing and rearraging if it's 5.
-   if(tasks_to_remove == TASK_RM_MULTIPLE) {
-      int tmp;
-      // This optimizes the removing
-      qsort(tasks_index, TASK_RM_MULTIPLE, sizeof(int), compare_ints);
-      // Code to remove actual elements here.
-      // Reverse the list so that you can transverse the list faster.
-      for (int i = TASK_RM_MULTIPLE-1; i >= 0; i--) {
-          free(tasks_indexs[i]);  // free the  actual memory.
-          // Shift every element after the list here.
-          for (int j = tasks_indexs[i]; j < num_tasks; j++) {
-              
-          }
-      }
+   // speed up the process of only freeing if the removed tasks >= TASK_RM_MULTPLE.
+   // First it scans if there are any done tasks in reverse, if there are remove it in reverse order.
+   if (tasks_to_remove >= TASK_RM_MULTIPLE) {
+       int l_index = -1;
+       for (int i = num_tasks-1; i >= 0; i--) {
+           if (all_tasks[i].task_state == TASK_DONE)
+               l_index = i;
+       }
 
-      tasks_to_remove = 0;
+       // If there's nothing to remove return
+       if (l_index == -1)
+           return;
+
+       for (int i = l_index; i < num_tasks; i++) {
+           free(all_tasks[i]);
+       }
+       // update num_tasks and tasks_to_remove.
+       num_tasks = l_index;
+       tasks_to_remove = tasks_to_remove - (num_tasks - l_index);
    }
 }
 
-void task_destroy(void) {
+void task_destroy(void)
+{
    for (int i = 0; i < num_tasks; i++) {
+       free(all_tasks[i]);
    }
    free(all_tasks);
 }
-

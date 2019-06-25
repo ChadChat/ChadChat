@@ -1,0 +1,14 @@
+============================
+			UDP
+============================
+
+Peer:
+	-> Sets up a socket and connects to the server (may need DNS)
+	-> Sends the "observed" ip and port information along the RSA pub/shit to
+		the server. Try to keep the connection open.
+
+
+Server:
+	-> Sets up a socket and binds it to all interfaces and waits for incoming connections.
+	-> When there is some new data read it with PROTO[1] and save the address and data of
+		the new client, keep the connection open!!, and try to do some RSA pub/priv shit here

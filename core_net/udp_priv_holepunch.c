@@ -8,16 +8,18 @@
 #include <sys/types.h>
 
 /* TODO: Check if it's some common port and change it */
+/* This should be the local port that we connect to
+ * the server with
+ */
 #define UDP_PRIV_PORT	10801
+
+#define SZ_IPV4_ADDR	sizeof(struct in_addr)
+#define SZ_IPV4_PORT	sizeof(short)
+#define SZ_SRVR_ST		sizeof(struct sockaddr_in)
 
 RES udp_priv_hp_init(udp_priv_holepunch *hp)
 {
-	struct sockaddr_in sin = {0};
 	struct ifaddrs *ifaddr;
-
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(UDP_PRIV_PORT);
-	sin.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	if ((hp->socket = socket(AF_INET, SOCK_DGRAM)) == -1) {
 		perror("socket");
@@ -35,17 +37,33 @@ RES udp_priv_hp_init(udp_priv_holepunch *hp)
 	return 0;
 }
 
-RES udp_send_info(char *server_name)
+RES udp_send_info(udp_priv_holepunch *hp, char *server_name)
 {
 	struct hostent *host;
-	struct in_addr ip;
+	struct in_addr srvr_ip;
+	short port = UDP_PRIV_PORT;
+	char to_send[256];
+	struct sockaddr_in sin = {0};
+	size_t len = ;
 
 	if (!(host = gethostbyname(server_name))) {
 		log(LOG_ERR, "gethostbyname failed");
 		return RES_ERR;
 	}
 
-	memcpy(&ip, host->h_addr_list[0], sizeof(struct in_addr));
+	memcpy(&ip, host->h_addr_list[0], SZ_IPV4_ADDR);
+
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(port);
+	sin.sin_addr.s_addr = srvr_ip;
+
+	memcpy(to_send, &srvr_ip, SZ_IPV4_ADDR);
+	memcpy(to_send+SZ_IPV4_ADDR, &port, SZ_IPV4_PORT);
+	/* TODO: add signature here */
+	/* TODO: we need a simple scheduler to keep the
+	 * connection open with the server */
+
+	sendto(hp->socket, to_send, len, 0, sin, SZ_SRVR_ST);
 
 	return RES_OK;
 }

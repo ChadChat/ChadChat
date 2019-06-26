@@ -5,10 +5,40 @@
 Peer:
 	-> Sets up a socket and connects to the server (may need DNS)
 	-> Sends the "observed" ip and port information along the RSA pub/shit to
-		the server. Try to keep the connection open.
-
+		the server PROTO[1]. Try to keep the connection open.
+	->
 
 Server:
 	-> Sets up a socket and binds it to all interfaces and waits for incoming connections.
 	-> When there is some new data read it with PROTO[1] and save the address and data of
-		the new client, keep the connection open!!, and try to do some RSA pub/priv shit here
+		the new client if the flag is ADD_CLIENT, keep the connection open!!
+	-> If the flag1 is REQ_CLIENT the layout will be PROTO[2] need to read in the public
+		key and enumerate over the clients given signature and reply with PROTO[3]
+
+PROTO[1]
+	+------------+---------------+------------+-----------
+	+  flag1     |   4 bytes     |  2 bytes   | TODO
+	+------------+---------------+------------+-----------
+	+ ADD_CLIENT | local address | local port | signature
+	+------------+---------------+------------+-----------
+
+PROTO[2]
+	+------------+---------------+---------------
+	+  flag1     |   2 bytes     | sizeof pubkey
+	+------------+---------------+---------------
+	+ REQ_CLIENT | sizeof pubkey | pubkey
+	+------------+---------------+---------------
+
+PROTO[3]
+	+------------+---------------+------------+-----------
+	+  flag1     |   4 bytes     |  2 bytes   | TODO
+	+------------+---------------+------------+-----------
+	+ MATCHED    | local address | local port | signature
+	+------------+---------------+------------+-----------
+
+enum flag1: uint8_t
+	ADD_CLIENT = 0
+	REQ_CLIENT = 1
+	MATCHED    = 2
+	UNMATCHED  = 3
+
